@@ -1,0 +1,11 @@
+streamlit[auth]>=1.66.0
+Authlib>=1.9.1
+psycopg[binary]>=3.3.6
+pandas
+numpy
+yfinance
+factor-analyzer
+requests
+scikit-learn<1.6.0
+matplotlib
+pandera
