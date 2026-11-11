@@ -137,8 +137,6 @@ def run_pipeline(end_date, gate_threshold, provider=None, trace=None, *,
         with spinner("Executing Phase 2: 8-Factor Varimax Orthogonality & Factor Loadings (full universe)..."):
             valid_all, loadings_df, max_loadings, dominant_factors = engine.fit_factors(
                 returns_df, all_universe, n_factors)
-            if trace is not None:
-                trace.factor_eligible_tickers = list(valid_all)
     except engine.SelectionError as exc:
         if ui is not None:
             ui.error(str(exc))
@@ -154,6 +152,8 @@ def run_pipeline(end_date, gate_threshold, provider=None, trace=None, *,
         survivor_set = set(survivor_tickers)
         valid = [t for t in valid_all if t in survivor_set]
         loadings_df = loadings_df.loc[valid]
+        if trace is not None:
+            trace.factor_eligible_tickers = list(valid)
     try:
         if not valid:
             raise engine.SelectionError(
