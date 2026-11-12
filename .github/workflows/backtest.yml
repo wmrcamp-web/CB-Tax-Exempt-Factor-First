@@ -18,6 +18,6 @@ jobs:
       - run: |
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
-          git add backtest_results.csv backtest_detailed_results.csv backtest_results_archive.csv backtest_detailed_results_archive.csv 2>/dev/null || true
+          git add backtest_*.csv
           git commit -m "Rebuild 10-year backtest with factor-first selection" || echo "nothing to commit"
           git push
