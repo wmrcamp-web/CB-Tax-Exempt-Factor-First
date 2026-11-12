@@ -40,8 +40,8 @@ The existing dashboards and baseline backtests still use the live provider.
 `sharadar_provider.py` supports **Sharadar's direct API**, not Nasdaq Data Link.
 It requests historical S&P 500 snapshots and effective membership changes,
 dated `daily.marketcap` (converted from USD millions to USD), adjusted stock
-prices, and adjusted SPY fund prices. Required subscriptions cover the `sp500`,
-`daily`, `stocks`, and `funds` tables. See the vendor's
+prices, adjusted SPY fund prices, and security metadata. Required subscriptions
+cover the `sp500`, `daily`, `stocks`, `funds`, and `tickers` tables. See the vendor's
 [direct API documentation](https://sharadar.com/docs/intro).
 
 **Do not paste API keys into code, chat, command arguments, or committed files.**
@@ -73,15 +73,22 @@ $env:SHARADAR_API_KEY = [System.Net.NetworkCredential]::new("", $key).Password
 python sharadar_backtest.py --check-access
 ```
 
-The access check queries small samples and required fields from all four tables;
+The access check queries small samples and required fields from all five tables;
 it does not prove full historical coverage or correct delisting valuations.
-The adapter has offline fixture tests, but live authentication and subscription
-coverage must be verified from a machine that can reach `api.sharadar.com`.
+The adapter has offline fixture tests. The user confirmed live access to the
+first four tables on Windows; security metadata access and full historical
+coverage must also be verified on a machine that can reach `api.sharadar.com`.
 
-**Dated GICS inputs are required.** This protocol excludes Energy and uses sector
-labels in portfolio construction. The integration deliberately does not replace
-historical GICS with present-day security metadata or a different classification
-scheme. For each selection date, supply
+**No manual sector files are required by default.** The default configuration
+uses Sharadar's `tickers` sector/industry labels, including for delisted companies.
+These are **current vendor classifications, not point-in-time GICS**. They are
+adapted into the pipeline's existing sector-column names, preserving the Energy
+exclusion and sector-based portfolio labels, but remaining classification and
+look-ahead bias must be disclosed. Missing labels/identifiers fail explicitly;
+there is no substitute universe from Wikipedia.
+
+For strict dated GICS instead, set `SHARADAR_SECTOR_SOURCE=dated_gics` in your
+environment or private Streamlit secrets. For each selection date, supply
 `.data/sharadar/gics/sp500_YYYY-MM-DD.csv` with columns:
 
 ```csv
@@ -99,13 +106,23 @@ you remain responsible for provenance.
 Once configured:
 
 ```bash
-python sharadar_backtest.py --start-year 2016 --end-year 2025
+python sharadar_backtest.py --start-year 2016 --end-year 2025 --estimate-delisted
 python -m streamlit run app.py
 ```
 
-On **Backtest Results**, choose **Sharadar historical results** in the sidebar.
+Alternatively, on **Backtest Results**, choose **Sharadar historical results**,
+select the first and last portfolio years, and click **Generate Sharadar backtest**.
+Generation is available even when no summary file exists. To allow estimated
+exits, check **Estimate delisted exits at last close** in the sidebar before
+generating. Otherwise missing terminal valuations stop the affected year.
+This uses your inherited environment key or private Streamlit secrets and does
+not require another terminal command. Re-generating replaces and archives
+successful requested years. The page reports each unsuccessful year explicitly;
+cumulative statistics are withheld if requested years failed or saved years have gaps.
+
 Summary, detailed holdings, archives and selection traces are isolated under
-`.data/sharadar/`, which is ignored by Git. No baseline CSVs are overwritten,
+`.data/sharadar/`, which is ignored by Git (the CLI writes selection traces;
+both CLI and UI export classification and exit-policy disclosures). No baseline CSVs are overwritten,
 no deployment is performed, and licensed source data must not be committed or
 redistributed without permission. A lapsed subscription's permitted local
 retention/use is governed by your vendor agreement.
@@ -115,18 +132,28 @@ bars using only observations on or before the selection date. Sharadar forward
 returns use actual closes on the last SPY trading day on or before each annual
 boundary, rather than backfilling a start price from future observations.
 Missing/nonpositive caps, missing classifications, malformed membership, and
-missing endpoint prices fail explicitly; there is **no live-data fallback**.
+unexplained missing endpoint prices fail explicitly; there is **no live-data fallback**.
 The roster-size check rejects obvious partial snapshots but cannot prove
 membership accuracy or historical coverage.
 
-**This is not yet a complete survivorship-bias-free backtest.** Terminal
-bankruptcy, merger, and delisting proceeds are not synthesized. If a holding's
-prices end before SPY's, its year is not published rather than carrying its last
-quote to year-end. Skipping those years can itself bias results: the CLI exits
-unsuccessfully when any requested year is absent. Resolve those corporate
-actions and verify complete annual coverage before drawing performance
-conclusions. Existing reconciled Sharadar years are retained; to recalculate
-them, archive/move the isolated output files first.
+**This is not a fully point-in-time, verified-delisting-return study.** With
+`--estimate-delisted` (or the UI checkbox), an early price termination is eligible
+for estimation only when the security master marks it delisted and its exact
+last price date matches the final observed adjusted close within the holding year.
+The estimate liquidates at that close and holds cash at **0%** through year-end.
+This is not the actual merger consideration or bankruptcy recovery and can
+materially overstate bankrupt-stock returns. It does not automatically reinvest
+in an acquirer or assume a verified payout. Ordinary missing quotes are not
+treated as delistings.
+
+CSV disclosures include `Sector_Source`, `Delisting_Policy`,
+`Estimated_Exit_Count` (summary), and `Exit_Valuation` (holdings). CLI selection
+traces also record the estimate notes. Strict mode remains available by omitting
+the estimate flag/checkbox. Skipping incomplete years can itself bias results:
+the CLI exits unsuccessfully when any requested year is absent. Verify complete
+annual coverage and investigate estimated exits before drawing conclusions.
+Existing reconciled CLI years are retained; to recalculate those years, use the
+UI generation button or archive/move the isolated output files first.
 
 ### Email and acknowledgment data
 

@@ -13,7 +13,7 @@ from symbol_utils import normalize_symbol
 
 API_ROOT = "https://api.sharadar.com/v1.0/data"
 PAGE_SIZE = 10000
-TABLES = {"sp500", "daily", "stocks", "funds"}
+TABLES = {"sp500", "daily", "stocks", "funds", "tickers"}
 
 
 class SharadarClient:
@@ -23,7 +23,8 @@ class SharadarClient:
         self._api_key = api_key.strip()
         self._session = requests.Session() if session is None else session
 
-    def table(self, table, fields, **filters):
+    def table(self, resource, fields, **filters):
+        table = resource
         if table not in TABLES:
             raise ValueError(f"Unsupported Sharadar table: {table}")
         pages = []
@@ -34,7 +35,11 @@ class SharadarClient:
                     params={
                         **filters, "api_key": self._api_key, "format": "csv",
                         "fields": ",".join(fields), "limit": PAGE_SIZE, "skip": offset,
-                        "sort": "date.asc,ticker.asc,action.asc" if table == "sp500" else "date.asc,ticker.asc",
+                        "sort": (
+                            "ticker.asc" if table == "tickers" else
+                            "date.asc,ticker.asc,action.asc" if table == "sp500" else
+                            "date.asc,ticker.asc"
+                        ),
                     },
                     timeout=(10, 90), allow_redirects=False,
                 )
@@ -82,18 +87,43 @@ def _symbols(frame):
 
 
 class SharadarProvider:
-    """Historical membership/caps/prices with externally supplied dated GICS labels.
+    """Historical membership/caps/prices with explicit classification/exit policies."""
 
-    No live-data fallback. Early price termination blocks publication until an
-    explicit corporate-action/delisting valuation policy is implemented.
-    """
-
-    def __init__(self, api_key, gics_dir, client=None):
+    def __init__(self, api_key, gics_dir, client=None, *,
+                 sector_source="dated_gics", delisting_policy="strict"):
+        if sector_source not in {"dated_gics", "sharadar"}:
+            raise ValueError("Unsupported sector source.")
+        if delisting_policy not in {"strict", "last_close_cash"}:
+            raise ValueError("Unsupported delisting policy.")
         self.client = SharadarClient(api_key) if client is None else client
         self.gics_dir = Path(gics_dir)
+        self.sector_source = sector_source
+        self.delisting_policy = delisting_policy
+        self.notes = []
+        self.forward_notes = {}
         self._vendor_symbols = {}
+        self._metadata = {}
+
+    def _get_metadata(self, tickers):
+        for batch, vendor_tickers in self._batches(
+            [ticker for ticker in tickers if ticker not in self._metadata]
+        ):
+            frame = self.client.table(
+                "tickers",
+                ["ticker", "name", "sector", "industry", "isdelisted", "lastpricedate", "permaticker"],
+                ticker=vendor_tickers, table="fundamentals",
+            )
+            frame["symbol"] = _symbols(frame)
+            if (not frame["symbol"].isin(batch).all()
+                    or frame["symbol"].duplicated().any()
+                    or set(frame["symbol"]) != set(batch)):
+                raise MarketDataError("Sharadar security metadata must cover each requested ticker once.")
+            self._metadata.update({row["symbol"]: row for row in frame.to_dict("records")})
+        return pd.DataFrame([self._metadata[ticker] for ticker in tickers])
 
     def get_constituents(self, as_of_date: date):
+        self.notes = []
+        self.forward_notes = {}
         history = self.client.table(
             "sp500", ["date", "action", "ticker", "name"],
             **{"from": "1998-01-01", "to": as_of_date.isoformat()},
@@ -129,6 +159,21 @@ class SharadarProvider:
                 del members[row.symbol]
         if not 490 <= len(members) <= 510:
             raise MarketDataError("Historical S&P 500 roster is implausibly small or large; verify coverage.")
+        self._vendor_symbols.update(members)
+        if self.sector_source == "sharadar":
+            metadata = self._get_metadata(sorted(members))
+            columns = ["name", "sector", "industry", "permaticker"]
+            if (metadata[columns].isna().any().any()
+                    or metadata[columns].apply(lambda col: col.str.strip().eq("")).any().any()):
+                raise MarketDataError("Sharadar security metadata has missing classifications/identifiers.")
+            self.notes.append(
+                "Historical membership and market caps; sector/industry labels are current "
+                "Sharadar classifications, not point-in-time GICS. Classification/look-ahead bias remains."
+            )
+            return metadata.rename(columns={
+                "symbol": "Symbol", "name": "Security", "sector": "GICS Sector",
+                "industry": "GICS Sub-Industry", "permaticker": "Security_ID",
+            })[["Symbol", "Security", "GICS Sector", "GICS Sub-Industry", "Security_ID"]]
         path = self.gics_dir / f"sp500_{as_of_date.isoformat()}.csv"
         try:
             labels = pd.read_csv(path, dtype=str)
@@ -241,15 +286,39 @@ class SharadarProvider:
         return prices.groupby(weeks).last().reindex(columns=tickers)
 
     def get_forward_closes(self, tickers, start_date: date, end_date: date):
+        self.forward_notes = {}
         prices = self._daily_closes(tickers, start_date - timedelta(days=7), end_date)
         start_prices = prices.loc[:pd.Timestamp(start_date)]
         if start_prices.empty or start_prices["SPY"].last_valid_index() is None:
             raise MarketDataError("No benchmark close exists on or before the rebalance date.")
         start = start_prices["SPY"].last_valid_index()
-        end = self._check_end(prices, tickers)
+        end = prices["SPY"].last_valid_index()
         if start >= end or prices.loc[start, tickers].isna().any():
             raise MarketDataError("Selected holdings lack valid prices at the rebalance boundary.")
-        return prices.loc[[start, end], tickers]
+        missing = [ticker for ticker in tickers if pd.isna(prices.loc[end, ticker])]
+        if missing and self.delisting_policy == "strict":
+            self._check_end(prices, tickers)
+        result = prices.loc[[start, end], tickers].copy()
+        for row in self._get_metadata(missing).to_dict("records") if missing else []:
+            ticker = row["symbol"]
+            last = prices[ticker].last_valid_index()
+            try:
+                vendor_last = pd.Timestamp(row["lastpricedate"])
+            except (TypeError, ValueError):
+                raise MarketDataError(f"{ticker}: invalid delisting metadata date.") from None
+            if (str(row["isdelisted"]).lower() not in {"y", "true", "1"}
+                    or pd.isna(vendor_last) or last != vendor_last or last <= start):
+                raise MarketDataError(
+                    f"{ticker}: missing endpoint is not a confirmed terminal delisted price; "
+                    "no estimated payout was applied."
+                )
+            result.loc[end, ticker] = prices.loc[last, ticker]
+            self.forward_notes[ticker] = (
+                f"ESTIMATE: liquidation at last available adjusted close on {last.date()}, "
+                "then cash at 0% until year-end. Actual merger/bankruptcy proceeds unverified; "
+                "this can overstate losses recovered and is not a verified delisting return."
+            )
+        return result
 
     def get_benchmark_return(self, as_of_date: date):
         from protocol_engine import PRICE_HISTORY_DAYS, prepare_returns

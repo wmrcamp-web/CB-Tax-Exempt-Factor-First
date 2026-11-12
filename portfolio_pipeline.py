@@ -83,6 +83,8 @@ def run_pipeline(end_date, gate_threshold, provider=None, trace=None, *,
     with spinner(f"Fetching S&P 500 constituents ending {end_date}..."):
         sp500_df = _acquire(trace, "S&P 500 constituent download",
                             provider.get_constituents, end_date)
+        if trace is not None:
+            trace.selection_notes.extend(getattr(provider, "notes", []))
         candidates, ticker_to_sector = engine.prepare_universe(
             sp500_df, BANNED_TICKERS_SECTORS)
         if trace is not None:

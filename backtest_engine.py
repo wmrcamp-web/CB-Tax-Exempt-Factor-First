@@ -154,6 +154,8 @@ def compute_backtest_year(target_year, provider=None, traces=None):
             data = provider.get_weekly_closes(all_tickers, start_eval_date, end_eval_date)
             # Preserve legacy provider behavior; strict providers validate their own endpoints.
             data = data.bfill().ffill()
+        if trace is not None:
+            trace.selection_notes.extend(getattr(provider, "forward_notes", {}).values())
     except Exception as e:
         if trace is not None:
             trace.backtest_status = "forward_data_failed"
@@ -210,6 +212,14 @@ def compute_backtest_year(target_year, provider=None, traces=None):
         "Benchmark_Return": benchmark_return,
         "Alpha": alpha,
     } for ticker in sorted(final_tickers)]
+    if hasattr(provider, "sector_source"):
+        summary["Sector_Source"] = provider.sector_source
+        summary["Delisting_Policy"] = provider.delisting_policy
+        summary["Estimated_Exit_Count"] = len(provider.forward_notes)
+        for row in details:
+            row["Sector_Source"] = provider.sector_source
+            row["Delisting_Policy"] = provider.delisting_policy
+            row["Exit_Valuation"] = provider.forward_notes.get(row["Ticker"], "Observed annual endpoint")
 
     try:
         reconcile_year(summary, details)
@@ -346,7 +356,7 @@ def update_backtest_history(csv_path=Path(__file__).resolve().parent / "backtest
         df = integer_years(df.sort_values(
             by="Year", key=lambda col: pd.to_numeric(col, errors="coerce")).reset_index(drop=True))
         new_details = pd.DataFrame(
-            [row for year in sorted(years) for row in results[year].details], columns=DETAILED_COLUMNS)
+            [row for year in sorted(years) for row in results[year].details])
         detailed_df = pd.concat([detailed_df[~detail_years.isin(years)], new_details], ignore_index=True)
         detailed_df = detailed_df.sort_values(["Year", "Ticker"]).reset_index(drop=True)
         atomic_write_csv(df, csv_path)

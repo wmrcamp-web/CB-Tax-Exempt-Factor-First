@@ -18,7 +18,8 @@ class Tables:
         self.tables = tables
         self.calls = []
 
-    def table(self, table, fields, **filters):
+    def table(self, table_name, fields, **filters):
+        table = table_name
         self.calls.append((table, filters))
         return self.tables[table].copy()
 
@@ -250,7 +251,7 @@ def test_results_source_is_opt_in_and_does_not_display_baseline_as_sharadar(monk
     page.radio[0].set_value("Sharadar historical results").run(timeout=15)
     assert not page.exception
     assert not page.get("download_button")
-    assert any("No valid annual summary" in warning.value for warning in page.warning)
+    assert any("No results have been generated" in message.value for message in page.info)
 
 
 def test_cli_exits_unsuccessfully_when_years_are_unpublished(monkeypatch, tmp_path, capsys):
@@ -265,3 +266,136 @@ def test_cli_exits_unsuccessfully_when_years_are_unpublished(monkeypatch, tmp_pa
         sharadar_backtest.main()
     assert caught.value.code == 1
     assert "No Sharadar years were published" in capsys.readouterr().err
+
+
+def metadata(symbols):
+    return pd.DataFrame([
+        {"ticker": symbol, "name": symbol, "sector": "Industrials", "industry": "Machinery",
+         "isdelisted": "N", "lastpricedate": "2026-11-12", "permaticker": str(index + 1)}
+        for index, symbol in enumerate(symbols)
+    ])
+
+
+def test_current_sharadar_classifications_do_not_require_gics_files(tmp_path):
+    client = Tables(sp500=roster(), tickers=metadata([f"T{i}" for i in range(500)]))
+    # The fixture client returns a full roster; emulate the vendor ticker filter.
+    original = client.table
+
+    def filtered(resource, fields, **filters):
+        frame = original(resource, fields, **filters)
+        if resource == "tickers":
+            return frame[frame["ticker"].isin(filters["ticker"].split(","))]
+        return frame
+
+    client.table = filtered
+    provider = sp.SharadarProvider("fixture-only", tmp_path, client=client, sector_source="sharadar")
+    result = provider.get_constituents(date(2019, 12, 31))
+    assert len(result) == 500
+    assert set(result["GICS Sector"]) == {"Industrials"}
+    assert result["Security_ID"].nunique() == 500
+    assert "not point-in-time GICS" in provider.notes[0]
+    assert all("from" not in filters and filters["table"] == "fundamentals"
+               for resource, filters in client.calls if resource == "tickers")
+
+
+@pytest.mark.parametrize("confirmed", [True, False])
+def test_delisted_exit_estimate_requires_confirmed_terminal_price(tmp_path, confirmed):
+    provider = price_provider(tmp_path, [
+        {"ticker": "T0", "date": day, "closeadj": value}
+        for day, value in [("2019-12-30", 50), ("2020-01-02", 20)]
+    ])
+    provider.delisting_policy = "last_close_cash"
+    master = metadata(["T0"])
+    master.loc[0, "isdelisted"] = "Y" if confirmed else "N"
+    master.loc[0, "lastpricedate"] = "2020-01-02"
+    provider.client.tables["tickers"] = master
+    if not confirmed:
+        with pytest.raises(MarketDataError, match="not a confirmed"):
+            provider.get_forward_closes(["T0", "SPY"], date(2019, 12, 31), date(2020, 12, 31))
+        return
+    prices = provider.get_forward_closes(["T0", "SPY"], date(2019, 12, 31), date(2020, 12, 31))
+    assert prices.iloc[-1]["T0"] == 20
+    assert "ESTIMATE" in provider.forward_notes["T0"]
+    assert "0%" in provider.forward_notes["T0"]
+
+
+def test_later_metadata_price_date_does_not_justify_filling_a_quote_gap(tmp_path):
+    provider = price_provider(tmp_path, [
+        {"ticker": "T0", "date": day, "closeadj": value}
+        for day, value in [("2019-12-30", 50), ("2020-01-02", 20)]
+    ])
+    provider.delisting_policy = "last_close_cash"
+    master = metadata(["T0"])
+    master.loc[0, "isdelisted"] = "Y"
+    master.loc[0, "lastpricedate"] = "2021-01-02"
+    provider.client.tables["tickers"] = master
+    with pytest.raises(MarketDataError, match="not a confirmed"):
+        provider.get_forward_closes(["T0", "SPY"], date(2019, 12, 31), date(2020, 12, 31))
+    assert not provider.forward_notes
+
+
+def test_estimated_return_disclosure_survives_summary_and_detail_export(monkeypatch, tmp_path):
+    import backtest_engine as bt
+    import backtest_exports as exports
+
+    provider = price_provider(tmp_path, [
+        {"ticker": "T0", "date": day, "closeadj": value}
+        for day, value in [("2019-12-30", 50), ("2020-01-02", 20)]
+    ])
+    provider.delisting_policy = "last_close_cash"
+    provider.sector_source = "sharadar"
+    master = metadata(["T0"])
+    master.loc[0, ["isdelisted", "lastpricedate"]] = ["Y", "2020-01-02"]
+    provider.client.tables["tickers"] = master
+    portfolio = pd.DataFrame({"Weight (%)": [100.0]}, index=["T0"])
+    monkeypatch.setattr(bt, "run_pipeline", lambda *args, **kwargs: (None, None, None, portfolio))
+    summary, details, failures = exports.rebuild_years([2020], provider=provider)
+    assert not failures
+    assert summary.iloc[0]["Estimated_Exit_Count"] == 1
+    assert summary.iloc[0]["Portfolio_Return"] == pytest.approx(-0.6)
+    assert details.iloc[0]["Exit_Valuation"].startswith("ESTIMATE")
+    assert details.iloc[0]["Sector_Source"] == "sharadar"
+    exports.persist_summary(summary, tmp_path / "summary.csv")
+    exports.persist_details(details, tmp_path / "details.csv")
+    saved, _ = exports.read_details(tmp_path / "details.csv")
+    assert saved.iloc[0]["Exit_Valuation"] == details.iloc[0]["Exit_Valuation"]
+
+
+def test_app_generates_missing_sharadar_files_without_touching_baseline(monkeypatch, tmp_path):
+    import backtest_engine as bt
+    import backtest_exports as exports
+    import backtest_results_page as page_module
+    import sharadar_backtest
+    from streamlit.testing.v1 import AppTest
+
+    monkeypatch.setattr(page_module, "require_access", lambda: None)
+    monkeypatch.setattr(exports, "DATA_DIR", tmp_path)
+    isolated = tmp_path / "isolated"
+    monkeypatch.setattr(sharadar_backtest, "DATA_DIR", isolated)
+    monkeypatch.setenv("SHARADAR_API_KEY", "fixture-only")
+    baseline = tmp_path / "backtest_results.csv"
+    baseline.write_text("Year,Portfolio_Return,Benchmark_Return,Alpha\n2020,0.1,0.05,0.05\n")
+    before = baseline.read_bytes()
+
+    def calculate(year, **kwargs):
+        assert kwargs["provider"].sector_source == "sharadar"
+        return bt.YearlyBacktest(
+            {"Year": year, "Portfolio_Return": 0.2, "Benchmark_Return": 0.1, "Alpha": 0.1,
+             "Sector_Source": "sharadar", "Delisting_Policy": "strict", "Estimated_Exit_Count": 0},
+            [{"Year": year, "Ticker": "T0", "Weight": 1.0, "Weight_Percent": 100.0,
+              "Start_Price": 50.0, "End_Price": 60.0, "Annual_Return": 0.2,
+              "Portfolio_Return": 0.2, "Benchmark_Return": 0.1, "Alpha": 0.1,
+              "Exit_Valuation": "Observed annual endpoint", "Sector_Source": "sharadar"}],
+        )
+
+    monkeypatch.setattr(exports, "compute_backtest_year", calculate)
+    page = AppTest.from_file(str(Path(exports.__file__).parent / "pages/1_Backtest_Results.py")).run()
+    page.radio[0].set_value("Sharadar historical results").run()
+    page.number_input[0].set_value(2020)
+    page.number_input[1].set_value(2020)
+    page.button[0].click().run(timeout=20)
+    assert not page.exception
+    assert (isolated / "backtest_results.csv").exists()
+    assert (isolated / "backtest_detailed_results.csv").exists()
+    assert baseline.read_bytes() == before
+    assert len(page.get("download_button")) == 2

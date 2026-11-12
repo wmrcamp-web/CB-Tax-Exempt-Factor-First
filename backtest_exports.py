@@ -142,8 +142,8 @@ def rebuild_years(years, provider=None, progress=None):
             failures[year] = str(exc)
     if progress is not None and years:
         progress(len(years), len(years), years[-1])
-    summary = pd.DataFrame(summaries, columns=SUMMARY_COLUMNS)
-    generated = validate_details(pd.DataFrame(details, columns=DETAILED_COLUMNS))
+    summary = pd.DataFrame(summaries) if summaries else pd.DataFrame(columns=SUMMARY_COLUMNS)
+    generated = validate_details(pd.DataFrame(details) if details else pd.DataFrame(columns=DETAILED_COLUMNS))
     generated[SOURCE_COLUMN] = GENERATED_SOURCE
     return summary, generated, failures
 
