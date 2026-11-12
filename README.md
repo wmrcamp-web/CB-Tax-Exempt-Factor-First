@@ -34,6 +34,100 @@ The alternate dashboard is `python -m streamlit run cb_taxable_portfolio_app.py`
 PostgreSQL installation is needed.** Existing identity configuration is not read
 by the cover sheet.
 
+### Opt-in Sharadar historical backtests
+
+The existing dashboards and baseline backtests still use the live provider.
+`sharadar_provider.py` supports **Sharadar's direct API**, not Nasdaq Data Link.
+It requests historical S&P 500 snapshots and effective membership changes,
+dated `daily.marketcap` (converted from USD millions to USD), adjusted stock
+prices, and adjusted SPY fund prices. Required subscriptions cover the `sp500`,
+`daily`, `stocks`, and `funds` tables. See the vendor's
+[direct API documentation](https://sharadar.com/docs/intro).
+
+**Do not paste API keys into code, chat, command arguments, or committed files.**
+Revoke any exposed key. Configure its replacement as `SHARADAR_API_KEY` through
+your local environment, or through private `.streamlit/secrets.toml` for viewing
+and rebuilding results in Streamlit:
+
+```toml
+SHARADAR_API_KEY = "REPLACE_WITH_PRIVATE_KEY"
+# Optional; default is .data/sharadar/gics under the repository.
+SHARADAR_GICS_DIR = "/absolute/path/to/dated/gics"
+```
+
+The command-line runner reads **environment variables**, not Streamlit secrets.
+For example, enter the replacement without echoing it or saving it in shell history:
+
+```bash
+# Bash (macOS/Linux)
+read -r -s -p "Sharadar API key: " SHARADAR_API_KEY; echo
+export SHARADAR_API_KEY
+python sharadar_backtest.py --check-access
+```
+
+On Windows PowerShell:
+
+```powershell
+$key = Read-Host "Sharadar API key" -AsSecureString
+$env:SHARADAR_API_KEY = [System.Net.NetworkCredential]::new("", $key).Password
+python sharadar_backtest.py --check-access
+```
+
+The access check queries small samples and required fields from all four tables;
+it does not prove full historical coverage or correct delisting valuations.
+The adapter has offline fixture tests, but live authentication and subscription
+coverage must be verified from a machine that can reach `api.sharadar.com`.
+
+**Dated GICS inputs are required.** This protocol excludes Energy and uses sector
+labels in portfolio construction. The integration deliberately does not replace
+historical GICS with present-day security metadata or a different classification
+scheme. For each selection date, supply
+`.data/sharadar/gics/sp500_YYYY-MM-DD.csv` with columns:
+
+```csv
+Symbol,Security,GICS Sector,GICS Sub-Industry
+```
+
+Each file must contain the exact historical S&P 500 roster once, including
+companies later removed or delisted. For portfolio year 2016, the input date is
+2015-12-31. Use Sharadar's security identifiers, including its disambiguated
+delisted tickers; period/hyphen share-class normalization is supported. Obtain
+dated classifications from a licensed historical source. Matching the roster
+does **not** establish that classifications were actually known on that date;
+you remain responsible for provenance.
+
+Once configured:
+
+```bash
+python sharadar_backtest.py --start-year 2016 --end-year 2025
+python -m streamlit run app.py
+```
+
+On **Backtest Results**, choose **Sharadar historical results** in the sidebar.
+Summary, detailed holdings, archives and selection traces are isolated under
+`.data/sharadar/`, which is ignored by Git. No baseline CSVs are overwritten,
+no deployment is performed, and licensed source data must not be committed or
+redistributed without permission. A lapsed subscription's permitted local
+retention/use is governed by your vendor agreement.
+
+Stock selection aggregates adjusted daily closes into Monday-labeled weekly
+bars using only observations on or before the selection date. Sharadar forward
+returns use actual closes on the last SPY trading day on or before each annual
+boundary, rather than backfilling a start price from future observations.
+Missing/nonpositive caps, missing classifications, malformed membership, and
+missing endpoint prices fail explicitly; there is **no live-data fallback**.
+The roster-size check rejects obvious partial snapshots but cannot prove
+membership accuracy or historical coverage.
+
+**This is not yet a complete survivorship-bias-free backtest.** Terminal
+bankruptcy, merger, and delisting proceeds are not synthesized. If a holding's
+prices end before SPY's, its year is not published rather than carrying its last
+quote to year-end. Skipping those years can itself bias results: the CLI exits
+unsuccessfully when any requested year is absent. Resolve those corporate
+actions and verify complete annual coverage before drawing performance
+conclusions. Existing reconciled Sharadar years are retained; to recalculate
+them, archive/move the isolated output files first.
+
 ### Email and acknowledgment data
 
 - The email field is **optional**, self-reported, and unverified. It is not used

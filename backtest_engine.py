@@ -147,9 +147,13 @@ def compute_backtest_year(target_year, provider=None, traces=None):
     
     # Fetch data
     try:
-        data = provider.get_weekly_closes(all_tickers, start_eval_date, end_eval_date)
-        # bfill() then ffill() ensures we have a valid start and end price even if a stock halted or delisted mid-year
-        data = data.bfill().ffill()
+        forward_closes = getattr(provider, "get_forward_closes", None)
+        if forward_closes is not None:
+            data = forward_closes(all_tickers, start_eval_date, end_eval_date)
+        else:
+            data = provider.get_weekly_closes(all_tickers, start_eval_date, end_eval_date)
+            # Preserve legacy provider behavior; strict providers validate their own endpoints.
+            data = data.bfill().ffill()
     except Exception as e:
         if trace is not None:
             trace.backtest_status = "forward_data_failed"

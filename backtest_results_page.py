@@ -6,6 +6,7 @@ import pandas as pd
 import streamlit as st
 
 import backtest_exports as exports
+from data_errors import MarketDataError
 from ui_style import apply_nav_style
 from access_gate import require_access
 
@@ -15,6 +16,32 @@ def render_results(data_dir=None, provider=None):
     apply_nav_style()
     require_access()
     st.title("Historical Backtest Results")
+    sharadar = False
+    if provider is None and data_dir is None:
+        source_choice = st.sidebar.radio(
+            "Backtest data source", ["Existing / live-provider results", "Sharadar historical results"],
+        )
+        if source_choice == "Sharadar historical results":
+            from sharadar_backtest import DATA_DIR, configured_provider
+            from streamlit.errors import StreamlitSecretNotFoundError
+
+            try:
+                settings = st.secrets.to_dict()
+            except StreamlitSecretNotFoundError:
+                settings = {}
+            try:
+                provider = configured_provider(settings)
+            except MarketDataError as exc:
+                st.error(str(exc))
+                return
+            data_dir = DATA_DIR
+            sharadar = True
+            st.warning(
+                "Sharadar results are stored separately. Generate them with "
+                "`python sharadar_backtest.py` and dated GICS input files. Missing "
+                "delisting/corporate-action proceeds block publication; skipped years "
+                "must not be interpreted as a complete survivorship-bias-free backtest."
+            )
     st.markdown("Review the annual and cumulative performance of the Still Point Protocol against the S&P 500 benchmark.")
     st.caption(
         "Saved backtests retain the protocol rules used when they were generated; "
@@ -41,9 +68,10 @@ def render_results(data_dir=None, provider=None):
         "ticker returns match their start/end prices and the weighted holdings return matches "
         "the summary portfolio return. Rebuilding reruns selection using the current provider's "
         "constituents and market caps (not original historical holdings) and replaces that "
-        "year's summary row; replaced rows are archived. Equal weights and filled weekly closes "
-        "are unchanged. Weights and returns are decimal fractions (0.10 = 10%); Weight_Percent "
-        "uses percent units.")
+        "year's summary row; replaced rows are archived. Equal weights are unchanged. "
+        "Legacy providers fill weekly closes; Sharadar validates annual endpoint prices "
+        "without synthesizing delisting proceeds. Weights and returns are decimal fractions "
+        "(0.10 = 10%); Weight_Percent uses percent units.")
     details_path = data_dir / "backtest_detailed_results.csv"
     key = f"backtest_details:{summary_path.resolve()}"
     state = st.session_state.setdefault(key, {})
@@ -113,10 +141,10 @@ def render_results(data_dir=None, provider=None):
         st.dataframe(published, use_container_width=True)
 
     with summary_section:
-        render_summary(source, df, state.get("summary") is not None)
+        render_summary(source, df, state.get("summary") is not None, sharadar=sharadar)
 
 
-def render_summary(source, df, session_only):
+def render_summary(source, df, session_only, sharadar=False):
     if session_only:
         source = df.to_csv(index=False).encode("utf-8")
     beat_count = int((df["Portfolio_Return"] > df["Benchmark_Return"]).sum())
@@ -126,8 +154,11 @@ def render_summary(source, df, session_only):
         f"S&P 500 in {beat_count} of {len(df)} annual periods. For context, SPIVA reported "
         "that 84.3% of U.S. large-cap active funds underperformed the S&P 500 over the "
         "decade ending in 2024. This is not a direct comparison: the periods and methods "
-        "differ, and this backtest uses today’s constituents and market-cap rankings for "
-        "historical years. It does not show how likely the protocol is to beat active managers."
+        "differ. " +
+        ("These isolated Sharadar results use dated membership, market caps and supplied GICS "
+         "labels; incomplete years can be absent. " if sharadar else
+         "This backtest uses today’s constituents and market-cap rankings for historical years. ") +
+        "It does not show how likely the protocol is to beat active managers."
     )
     st.download_button(
         "Download annual summary CSV", data=source,
@@ -136,6 +167,13 @@ def render_summary(source, df, session_only):
                "view). This is not a detailed holdings export." if not session_only else
                "Session-only annual summary including rebuilt years (local persistence is unavailable).")
     df = df.copy()
+    if sharadar and df["Year"].diff().dropna().ne(1).any():
+        st.warning(
+            "Sharadar results have gaps in annual coverage. Cumulative performance and CAGR "
+            "are withheld rather than treating skipped years as consecutive holding periods."
+        )
+        st.dataframe(df, use_container_width=True)
+        return
     df["Cumulative_Portfolio"] = (1 + df["Portfolio_Return"]).cumprod() - 1
     df["Cumulative_Benchmark"] = (1 + df["Benchmark_Return"]).cumprod() - 1
     years = len(df)
