@@ -86,7 +86,7 @@ def reconcile_year(summary, details, tolerance=RECONCILIATION_TOLERANCE):
 
 
 def compute_backtest_year(target_year, provider=None, traces=None, *, n_factors=8,
-                          shadow_fraction_limit=None):
+                          shadow_fraction_limit=None, shadow_priority="downside_beta"):
     """
     Simulates running the protocol on Dec 31 of (target_year - 1) and tracking 
     the portfolio's performance through Dec 31 of target_year.
@@ -118,6 +118,8 @@ def compute_backtest_year(target_year, provider=None, traces=None, *, n_factors=
         factor_kwargs = {"n_factors": n_factors} if n_factors != 8 else {}
         if shadow_fraction_limit is not None:
             factor_kwargs["shadow_fraction_limit"] = shadow_fraction_limit
+        if shadow_priority != "downside_beta":
+            factor_kwargs["shadow_priority"] = shadow_priority
         results = run_pipeline(start_eval_date, BENCHMARK_GATE, provider=provider,
                                **trace_kwargs, **factor_kwargs)
         portfolio_df = results[3]

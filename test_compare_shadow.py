@@ -13,11 +13,11 @@ from data_errors import MarketDataError
 from test_protocol_engine import selection_inputs
 
 
-def capped(rows, shadows, target=16):
+def capped(rows, shadows, target=16, priority="downside_beta"):
     metrics, loadings, headers = selection_inputs(rows)
     return protocol_engine.assemble_portfolio(
         0.1, metrics, loadings, pd.DataFrame(), headers, shadows, target,
-        shadow_fraction_limit=0.25,
+        shadow_fraction_limit=0.25, shadow_priority=priority,
     )[3]
 
 
@@ -79,6 +79,25 @@ def test_full_portfolio_has_no_more_than_four_shadows():
     assert portfolio.index[:4].tolist() == tickers[:4]
 
 
+def test_trailing_return_priority_reorders_shadow_list_before_cap():
+    rows = [
+        ("LOW_RETURN", 0.02, 0.1, 0.3, 0.1),
+        ("MID_RETURN", 0.10, 0.2, 0.3, 0.1),
+        ("HIGH_RETURN", 0.20, 0.3, 0.3, 0.1),
+        ("N1", 0.15, 0.5, 0.7, 0.1),
+        ("N2", 0.14, 0.6, 0.1, 0.7),
+        ("N3", 0.13, 0.7, 0.7, 0.1),
+        ("N4", 0.12, 0.8, 0.1, 0.7),
+    ]
+    shadows = ["LOW_RETURN", "MID_RETURN", "HIGH_RETURN"]
+    beta = capped(rows, shadows, target=4)
+    trailing = capped(rows, shadows, target=4, priority="trailing_return")
+    assert beta.index[0] == "LOW_RETURN"
+    assert trailing.index[0] == "HIGH_RETURN"
+    assert trailing.index[:1].tolist() == ["HIGH_RETURN"]
+    assert trailing["In_Shadow_List"].sum() == 1
+
+
 def test_shadow_option_propagates_to_pipeline(monkeypatch):
     calls = []
 
@@ -98,7 +117,9 @@ def arm(year):
              "survivor_tickers": ["A"], "factor_eligible_tickers": ["A"],
              "benchmark_window_start": "start", "benchmark_window_end": "end",
              "gate_mode": "benchmark", "gate_threshold": 0.1}
-    return {"status": "complete", "trace": trace, "holdings": [{"Ticker": "A", "In_Shadow_List": False}],
+    return {"status": "complete", "trace": trace,
+            "holdings": [{"Ticker": "A", "In_Shadow_List": False, "Weight": 1.0,
+                          "Annual_Return": 0.1, "Start_Price": 100.0, "End_Price": 110.0}],
             "summary": {"Portfolio_Return": 0.1, "Benchmark_Return": 0.05, "Alpha": 0.05},
             "daily_values": {f"{year - 1}-12-31": 1.0, f"{year}-12-31": 1.1},
             "max_drawdown": 0.0}
@@ -157,4 +178,50 @@ def test_complete_comparison_records_cap_and_original_report(tmp_path, monkeypat
     assert report["years"][0]["shadow_count"] == 0
     assert report["years"][0]["return_difference"] == 0
     assert report["full_period"]["capped"]["annualized_return"] == pytest.approx(0.1)
+    assert baseline_path.read_bytes() == before
+
+
+def test_shadow_priority_compare_verifies_old_run_and_saves_difference(tmp_path, monkeypatch):
+    import copy
+    import compare_shadow_priority as comparison
+
+    baseline_arm = arm(2020)
+    baseline = {
+        "factor_count": 13,
+        "shadow_limit": "at most floor(actual holdings / 4)",
+        "requested_years": [2020],
+        "sector_source": "sharadar",
+        "delisting_policy": "last_close_cash",
+        "excluded_symbols": sorted(comparison.EXCLUDED_SYMBOLS),
+        "source_sha256": {
+            name: hashlib.sha256((comparison.ROOT / name).read_bytes()).hexdigest()
+            for name in comparison.UNCHANGED_FILES
+        },
+        "years": [{"year": 2020, "status": "complete", "capped": baseline_arm}],
+    }
+    baseline_path = tmp_path / "shadow.json"
+    baseline_path.write_text(json.dumps(baseline))
+    before = baseline_path.read_bytes()
+    calls = []
+
+    def fake_arm(provider, year, factors, *, shadow_fraction_limit=None,
+                 shadow_priority="downside_beta"):
+        calls.append((factors, shadow_fraction_limit, shadow_priority))
+        value = copy.deepcopy(baseline_arm)
+        if shadow_priority == "trailing_return":
+            value["summary"]["Portfolio_Return"] = 0.15
+            value["summary"]["Alpha"] = 0.10
+            value["daily_values"][f"{year}-12-31"] = 1.15
+        return value
+
+    monkeypatch.setattr(comparison, "_arm", fake_arm)
+    output = tmp_path / "priority.json"
+    report = comparison.run_comparison(
+        SimpleNamespace(sector_source="sharadar", delisting_policy="last_close_cash"),
+        [2020], baseline_path, output, progress=lambda _: None,
+    )
+    assert calls == [(13, 0.25, "downside_beta"), (13, 0.25, "trailing_return")]
+    assert report["years"][0]["status"] == "complete"
+    assert report["years"][0]["return_difference"] == pytest.approx(0.05)
+    assert "full_period" in report
     assert baseline_path.read_bytes() == before

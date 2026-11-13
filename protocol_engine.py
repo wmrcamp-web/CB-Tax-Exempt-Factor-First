@@ -206,7 +206,17 @@ def label_factors(metrics_df, loadings_df):
 
 def assemble_portfolio(sp500_bench_return, metrics_df, loadings_df, survivors_df,
                        factor_headers, shadow_list, target_portfolio_size, *,
-                       shadow_fraction_limit=None):
+                       shadow_fraction_limit=None, shadow_priority="downside_beta"):
+    if shadow_priority not in {"downside_beta", "trailing_return"}:
+        raise ValueError("Unsupported shadow priority.")
+    if shadow_priority == "trailing_return":
+        priority = metrics_df.loc[list(dict.fromkeys(shadow_list))].copy()
+        priority["_return"] = pd.to_numeric(priority["T12M_Return"], errors="coerce")
+        priority["_ticker"] = priority.index
+        shadow_list = priority.sort_values(
+            ["_return", "Downside_Beta", "_ticker"],
+            ascending=[False, True, True], na_position="last",
+        ).index.tolist()
     if shadow_fraction_limit is not None:
         if shadow_fraction_limit != 0.25:
             raise ValueError("Only a 25% shadow limit is supported.")
@@ -277,7 +287,19 @@ def assemble_portfolio(sp500_bench_return, metrics_df, loadings_df, survivors_df
     if len(selected) < target_portfolio_size:
         remaining_shadow = metrics_df.loc[
             metrics_df.index.isin(shadow_list) & ~metrics_df.index.isin(selected)
-        ].sort_values(by="Downside_Beta", ascending=True).index.tolist()
+        ]
+        if shadow_priority == "trailing_return":
+            remaining_shadow = remaining_shadow.assign(
+                _return=pd.to_numeric(remaining_shadow["T12M_Return"], errors="coerce"),
+                _ticker=remaining_shadow.index,
+            ).sort_values(
+                ["_return", "Downside_Beta", "_ticker"],
+                ascending=[False, True, True], na_position="last",
+            ).index.tolist()
+        else:
+            remaining_shadow = remaining_shadow.sort_values(
+                by="Downside_Beta", ascending=True,
+            ).index.tolist()
         qualifying = loadings_abs[factor_headers].ge(NON_SHADOW_MIN_LOADING).any(axis=1)
         remaining_non_shadow = [
             c for c in ranked_non_shadow.index

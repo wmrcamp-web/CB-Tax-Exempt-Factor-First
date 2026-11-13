@@ -232,6 +232,24 @@ returns, traces and daily values must match the previous report or that year's
 comparison is withheld. Results go to `.data/shadow_comparisons/`. This remains
 an in-sample test, with the same classification and exit-estimate limitations.
 
+### Exploratory shadow priority comparison
+
+```bash
+python compare_shadow_priority.py \
+  --baseline-report .data/shadow_comparisons/your-capped-report.json \
+  --estimate-delisted
+```
+
+Provide the completed 2016–2025 13-factor shadow-cap comparison report. The
+command holds the 13-factor model, historical membership, 25% shadow cap, exit
+policy and Sharadar inputs constant, comparing the original lowest-downside-beta
+shadow ranking with highest trailing-12-month return (ties: lower downside beta,
+then ticker). It first verifies that the rerun of the old priority matches the
+saved holdings, returns and daily values. Paired per-year results and a full-
+period comparison are saved separately under `.data/shadow_priority_comparisons/`.
+This is an exploratory in-sample test; current sector labels and estimated
+delisting proceeds remain limitations.
+
 ### Email and acknowledgment data
 
 - The email field is **optional**, self-reported, and unverified. It is not used
