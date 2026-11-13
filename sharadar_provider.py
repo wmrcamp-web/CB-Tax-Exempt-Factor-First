@@ -14,6 +14,7 @@ from symbol_utils import normalize_symbol
 API_ROOT = "https://api.sharadar.com/v1.0/data"
 PAGE_SIZE = 10000
 MAX_TICKER_PARAMETER_LENGTH = 200
+MAX_TICKERS_PER_REQUEST = 30
 TABLES = {"sp500", "daily", "stocks", "funds", "tickers"}
 
 
@@ -204,7 +205,8 @@ class SharadarProvider:
             if len(vendor_symbol) > MAX_TICKER_PARAMETER_LENGTH:
                 raise MarketDataError("A security identifier exceeds Sharadar's ticker parameter limit.")
             additional = len(vendor_symbol) + bool(batch)
-            if batch and (len(batch) == 50 or length + additional > MAX_TICKER_PARAMETER_LENGTH):
+            if batch and (len(batch) == MAX_TICKERS_PER_REQUEST
+                          or length + additional > MAX_TICKER_PARAMETER_LENGTH):
                 yield batch, ",".join(vendor_symbols)
                 batch, vendor_symbols = [], []
                 length = 0

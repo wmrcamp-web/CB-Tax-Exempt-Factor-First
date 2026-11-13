@@ -47,7 +47,7 @@ def test_ticker_batches_retain_company_limit_and_reject_oversized_identifier(tmp
     provider = sp.SharadarProvider("fixture-only", tmp_path)
     provider._vendor_symbols = {str(i): str(i) for i in range(51)}
     batches = list(provider._batches(list(provider._vendor_symbols)))
-    assert [len(batch) for batch, _ in batches] == [50, 1]
+    assert [len(batch) for batch, _ in batches] == [30, 21]
     provider._vendor_symbols["LONG"] = "X" * 201
     with pytest.raises(MarketDataError, match="parameter limit"):
         list(provider._batches(["LONG"]))

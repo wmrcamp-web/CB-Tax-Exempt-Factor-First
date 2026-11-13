@@ -76,7 +76,7 @@ python sharadar_backtest.py --check-access
 The access check queries small samples and required fields from all five tables;
 it does not prove full historical coverage or correct delisting valuations.
 
-Ticker batches are limited to 50 securities and 200 characters (including commas)
+Ticker batches are limited to 30 securities and 200 characters (including commas)
 using the vendor identifiers, matching Sharadar's ticker-parameter limit.
 The adapter has offline fixture tests. The user confirmed live access to the
 first four tables on Windows; security metadata access and full historical
