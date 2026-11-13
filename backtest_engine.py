@@ -85,7 +85,7 @@ def reconcile_year(summary, details, tolerance=RECONCILIATION_TOLERANCE):
             f"portfolio return {portfolio:.6%}")
 
 
-def compute_backtest_year(target_year, provider=None, traces=None):
+def compute_backtest_year(target_year, provider=None, traces=None, *, n_factors=8):
     """
     Simulates running the protocol on Dec 31 of (target_year - 1) and tracking 
     the portfolio's performance through Dec 31 of target_year.
@@ -95,6 +95,8 @@ def compute_backtest_year(target_year, provider=None, traces=None):
     """
     print(f"\n--- Computing Backtest for {target_year} ---")
     provider = DEFAULT_PROVIDER if provider is None else provider
+    if not isinstance(n_factors, int) or isinstance(n_factors, bool) or n_factors < 1:
+        raise ValueError("n_factors must be a positive integer.")
     
     # 1. Run Phase 1-5 selection as of Dec 31 of the previous year
     # Note: If Dec 31 is a weekend, yfinance handles fetching the closest trading day implicitly in our logic
@@ -112,7 +114,9 @@ def compute_backtest_year(target_year, provider=None, traces=None):
     # run_pipeline returns: sp500_ret, metrics_df, loadings_df, portfolio_df, survivors_df, factor_headers
     try:
         trace_kwargs = {"trace": trace} if trace is not None else {}
-        results = run_pipeline(start_eval_date, BENCHMARK_GATE, provider=provider, **trace_kwargs)
+        factor_kwargs = {"n_factors": n_factors} if n_factors != 8 else {}
+        results = run_pipeline(start_eval_date, BENCHMARK_GATE, provider=provider,
+                               **trace_kwargs, **factor_kwargs)
         portfolio_df = results[3]
     except Exception as e:
         if trace is not None:

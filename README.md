@@ -196,6 +196,27 @@ effect of using current **membership** under these policies, not all forms of
 look-ahead bias or the impact of all excluded/delisted securities. Current sector
 labels and optional last-close cash estimates remain important limitations.
 
+### Exploratory factor-count comparison
+
+```bash
+python compare_factors.py --start-year 2016 --end-year 2025 --estimate-delisted
+```
+
+This independently recomputes 8- and 13-factor portfolios using historical
+Sharadar membership, the same SPY gate, exclusions and exit policy. Each year
+freezes the constituent list, selection market caps and weekly prices for both
+factor fits. It is compared only if both runs succeed and their selection universes and SPY
+windows agree. Results and holdings are stored separately under
+`.data/factor_comparisons/`; existing backtests are not overwritten.
+Daily-close maximum drawdowns use buy-and-hold positions, with rebalancing at
+annual boundaries and the selected delisting policy. Missing daily holding
+prices prevent a paired year from being published. Full-period metrics require
+all years and matching rebalance boundaries. Annualized excess return is the
+difference between portfolio and SPY annualized returns, not regression alpha.
+This is an in-sample exploration: choosing a factor count based on the same
+period risks overfitting. Current sector labels and estimated exit proceeds
+remain limitations.
+
 ### Email and acknowledgment data
 
 - The email field is **optional**, self-reported, and unverified. It is not used
