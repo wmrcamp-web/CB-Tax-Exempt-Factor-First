@@ -165,6 +165,37 @@ annual coverage and investigate estimated exits before drawing conclusions.
 Existing reconciled CLI years are retained; to recalculate those years, use the
 UI generation button or archive/move the isolated output files first.
 
+### Paired membership-bias comparison
+
+To compare the current factor-first protocol without mixing in the inherited
+backtest's different provider, price boundaries, or protocol rules:
+
+```bash
+python compare_membership.py --start-year 2016 --end-year 2025 --estimate-delisted
+```
+
+Set `SHARADAR_API_KEY` privately as above. The command freezes one current S&P
+500 snapshot, then recomputes **both** sides for each year: historical membership
+versus intentionally biased current membership. Both use the same Sharadar
+historical market caps and adjusted prices, current sector classifications,
+exclusions, SPY trailing-return gate, factor-first protocol and exit policy.
+Current members not yet priced by the historical selection date are excluded;
+first-price dates reflect vendor coverage, not necessarily an IPO or actual
+listing date. Other missing inputs fail rather than falling back to current prices/caps. The
+current member ticker-to-historical-security mapping and first-price dates must
+be verified with the provider; ticker reuse or renaming can affect coverage.
+
+Each run saves a unique private JSON report under `.data/membership_comparisons/`,
+with frozen roster, source hashes, settings, per-side selection traces, holdings,
+returns, and failure statuses. The original and earlier Sharadar output files
+are not changed. The command publishes a return difference only for years where
+both sides succeed and benchmark windows, gates, and forward SPY returns match.
+Annualized returns are shown only when every requested year is paired and
+consecutive. Incomplete years make a full-period comparison invalid. The output isolates the
+effect of using current **membership** under these policies, not all forms of
+look-ahead bias or the impact of all excluded/delisted securities. Current sector
+labels and optional last-close cash estimates remain important limitations.
+
 ### Email and acknowledgment data
 
 - The email field is **optional**, self-reported, and unverified. It is not used
