@@ -13,6 +13,7 @@ from symbol_utils import normalize_symbol
 
 API_ROOT = "https://api.sharadar.com/v1.0/data"
 PAGE_SIZE = 10000
+MAX_TICKER_PARAMETER_LENGTH = 200
 TABLES = {"sp500", "daily", "stocks", "funds", "tickers"}
 
 
@@ -194,13 +195,24 @@ class SharadarProvider:
         return labels.sort_values("Symbol").reset_index(drop=True)
 
     def _batches(self, tickers):
-        unique = list(dict.fromkeys(tickers))
-        for start in range(0, len(unique), 50):
-            batch = unique[start:start + 50]
-            unknown = [ticker for ticker in batch if ticker != "SPY" and ticker not in self._vendor_symbols]
-            if unknown:
+        batch, vendor_symbols = [], []
+        length = 0
+        for ticker in dict.fromkeys(tickers):
+            if ticker != "SPY" and ticker not in self._vendor_symbols:
                 raise MarketDataError("Load historical constituents before requesting their caps/prices.")
-            yield batch, ",".join(self._vendor_symbols.get(ticker, ticker) for ticker in batch)
+            vendor_symbol = self._vendor_symbols.get(ticker, ticker)
+            if len(vendor_symbol) > MAX_TICKER_PARAMETER_LENGTH:
+                raise MarketDataError("A security identifier exceeds Sharadar's ticker parameter limit.")
+            additional = len(vendor_symbol) + bool(batch)
+            if batch and (len(batch) == 50 or length + additional > MAX_TICKER_PARAMETER_LENGTH):
+                yield batch, ",".join(vendor_symbols)
+                batch, vendor_symbols = [], []
+                length = 0
+            length += len(vendor_symbol) + bool(batch)
+            batch.append(ticker)
+            vendor_symbols.append(vendor_symbol)
+        if batch:
+            yield batch, ",".join(vendor_symbols)
 
     def get_market_caps(self, tickers, as_of_date: date):
         caps = {}

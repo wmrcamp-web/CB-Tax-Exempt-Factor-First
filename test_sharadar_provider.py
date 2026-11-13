@@ -31,6 +31,28 @@ def roster():
     ])
 
 
+def test_ticker_batches_respect_vendor_length_commas_and_preserve_order(tmp_path):
+    provider = sp.SharadarProvider("fixture-only", tmp_path)
+    provider._vendor_symbols = {"FIRST": "A" * 100, "SECOND": "B" * 99, "THIRD": "BRK.B"}
+    batches = list(provider._batches(["FIRST", "SECOND", "THIRD", "FIRST", "SPY"]))
+    assert batches == [
+        (["FIRST", "SECOND"], "A" * 100 + "," + "B" * 99),
+        (["THIRD", "SPY"], "BRK.B,SPY"),
+    ]
+    assert all(len(parameter) <= 200 for _, parameter in batches)
+    assert list(provider._batches([])) == []
+
+
+def test_ticker_batches_retain_company_limit_and_reject_oversized_identifier(tmp_path):
+    provider = sp.SharadarProvider("fixture-only", tmp_path)
+    provider._vendor_symbols = {str(i): str(i) for i in range(51)}
+    batches = list(provider._batches(list(provider._vendor_symbols)))
+    assert [len(batch) for batch, _ in batches] == [50, 1]
+    provider._vendor_symbols["LONG"] = "X" * 201
+    with pytest.raises(MarketDataError, match="parameter limit"):
+        list(provider._batches(["LONG"]))
+
+
 def labels(tmp_path, symbols, stamp="2019-12-31"):
     pd.DataFrame({
         "Symbol": symbols, "Security": symbols,
