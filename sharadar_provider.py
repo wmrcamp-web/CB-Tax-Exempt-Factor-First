@@ -16,6 +16,7 @@ PAGE_SIZE = 10000
 MAX_TICKER_PARAMETER_LENGTH = 200
 MAX_TICKERS_PER_REQUEST = 30
 TABLES = {"sp500", "daily", "stocks", "funds", "tickers"}
+EXCLUDED_SYMBOLS = {"DISCK"}
 
 
 class SharadarClient:
@@ -161,6 +162,12 @@ class SharadarProvider:
                 del members[row.symbol]
         if not 490 <= len(members) <= 510:
             raise MarketDataError("Historical S&P 500 roster is implausibly small or large; verify coverage.")
+        excluded = sorted(set(members) & EXCLUDED_SYMBOLS)
+        if excluded:
+            self.notes.append(
+                "User-requested historical-universe exclusion: " + ", ".join(excluded) +
+                ". Results do not represent the complete historical eligible universe."
+            )
         self._vendor_symbols.update(members)
         if self.sector_source == "sharadar":
             metadata = self._get_metadata(sorted(members))
@@ -172,7 +179,7 @@ class SharadarProvider:
                 "Historical membership and market caps; sector/industry labels are current "
                 "Sharadar classifications, not point-in-time GICS. Classification/look-ahead bias remains."
             )
-            return metadata.rename(columns={
+            return metadata[~metadata["symbol"].isin(EXCLUDED_SYMBOLS)].rename(columns={
                 "symbol": "Symbol", "name": "Security", "sector": "GICS Sector",
                 "industry": "GICS Sub-Industry", "permaticker": "Security_ID",
             })[["Symbol", "Security", "GICS Sector", "GICS Sub-Industry", "Security_ID"]]
@@ -193,7 +200,7 @@ class SharadarProvider:
                 or labels[list(required)].apply(lambda col: col.str.strip().eq("")).any().any()):
             raise MarketDataError("The dated GICS file must cover the exact historical roster once.")
         self._vendor_symbols.update(members)
-        return labels.sort_values("Symbol").reset_index(drop=True)
+        return labels[~labels["Symbol"].isin(EXCLUDED_SYMBOLS)].sort_values("Symbol").reset_index(drop=True)
 
     def _batches(self, tickers):
         batch, vendor_symbols = [], []

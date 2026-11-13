@@ -87,6 +87,19 @@ def test_membership_replays_effective_changes_without_current_universe(tmp_path)
     assert client.calls[0][1] == {"from": "1998-01-01", "to": "2019-12-31"}
 
 
+def test_user_requested_disck_exclusion_preserves_full_roster_validation(tmp_path):
+    history = roster()
+    history.loc[0, "ticker"] = "DISCK"
+    symbols = history["ticker"].tolist()
+    labels(tmp_path, symbols)
+    provider = sp.SharadarProvider("fixture-only", tmp_path, client=Tables(sp500=history))
+    result = provider.get_constituents(date(2019, 12, 31))
+    assert len(result) == 499
+    assert "DISCK" not in set(result["Symbol"])
+    assert set(result["Symbol"]) == set(symbols) - {"DISCK"}
+    assert "User-requested historical-universe exclusion: DISCK" in provider.notes[0]
+
+
 @pytest.mark.parametrize("problem", ["future", "no-snapshot", "small", "unknown-action", "duplicate"])
 def test_invalid_membership_is_rejected(tmp_path, problem):
     history = roster()
