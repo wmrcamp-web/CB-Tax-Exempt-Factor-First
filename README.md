@@ -217,6 +217,21 @@ This is an in-sample exploration: choosing a factor count based on the same
 period risks overfitting. Current sector labels and estimated exit proceeds
 remain limitations.
 
+### Exploratory shadow allocation cap
+
+```bash
+python compare_shadow.py --baseline-report .data/factor_comparisons/your-report.json --estimate-delisted
+```
+
+Provide the completed 2016–2025 factor comparison report from the preceding
+command. This reruns both 13-factor portfolios with frozen selection inputs,
+comparing the original to a version with at most 25% shadow holdings, rounded
+down for portfolios with fewer than 16 stocks. If eligible non-shadow stocks
+cannot fill the portfolio, it may hold fewer stocks. The uncapped run's holdings,
+returns, traces and daily values must match the previous report or that year's
+comparison is withheld. Results go to `.data/shadow_comparisons/`. This remains
+an in-sample test, with the same classification and exit-estimate limitations.
+
 ### Email and acknowledgment data
 
 - The email field is **optional**, self-reported, and unverified. It is not used

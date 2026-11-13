@@ -205,7 +205,34 @@ def label_factors(metrics_df, loadings_df):
 
 
 def assemble_portfolio(sp500_bench_return, metrics_df, loadings_df, survivors_df,
-                       factor_headers, shadow_list, target_portfolio_size):
+                       factor_headers, shadow_list, target_portfolio_size, *,
+                       shadow_fraction_limit=None):
+    if shadow_fraction_limit is not None:
+        if shadow_fraction_limit != 0.25:
+            raise ValueError("Only a 25% shadow limit is supported.")
+        # Try the largest feasible priority allocation against actual portfolio size.
+        shadow_limit = target_portfolio_size // 4
+        shadow_set = set(shadow_list)
+        if (loadings_df.loc[loadings_df.index.isin(shadow_set), factor_headers]
+                .abs().ge(NON_SHADOW_MIN_LOADING).any().any()):
+            raise SelectionError("Shadow candidates unexpectedly qualify as non-shadow candidates.")
+        while True:
+            eligible_shadow = []
+            counts = {}
+            for ticker in shadow_list:
+                dominant = metrics_df.loc[ticker, "Dominant_Factor"]
+                if (ticker not in eligible_shadow and counts.get(dominant, 0) < 3
+                        and len(eligible_shadow) < shadow_limit):
+                    eligible_shadow.append(ticker)
+                    counts[dominant] = counts.get(dominant, 0) + 1
+            result = assemble_portfolio(
+                sp500_bench_return, metrics_df, loadings_df, survivors_df,
+                factor_headers, eligible_shadow, target_portfolio_size)
+            portfolio = result[3]
+            allowed = len(portfolio) // 4
+            if len(eligible_shadow) <= allowed:
+                return result
+            shadow_limit -= 1
     factor_counts = {f: 0 for f in factor_headers}
     selected = []
 

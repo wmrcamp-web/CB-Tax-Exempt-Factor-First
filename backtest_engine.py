@@ -85,7 +85,8 @@ def reconcile_year(summary, details, tolerance=RECONCILIATION_TOLERANCE):
             f"portfolio return {portfolio:.6%}")
 
 
-def compute_backtest_year(target_year, provider=None, traces=None, *, n_factors=8):
+def compute_backtest_year(target_year, provider=None, traces=None, *, n_factors=8,
+                          shadow_fraction_limit=None):
     """
     Simulates running the protocol on Dec 31 of (target_year - 1) and tracking 
     the portfolio's performance through Dec 31 of target_year.
@@ -115,6 +116,8 @@ def compute_backtest_year(target_year, provider=None, traces=None, *, n_factors=
     try:
         trace_kwargs = {"trace": trace} if trace is not None else {}
         factor_kwargs = {"n_factors": n_factors} if n_factors != 8 else {}
+        if shadow_fraction_limit is not None:
+            factor_kwargs["shadow_fraction_limit"] = shadow_fraction_limit
         results = run_pipeline(start_eval_date, BENCHMARK_GATE, provider=provider,
                                **trace_kwargs, **factor_kwargs)
         portfolio_df = results[3]
@@ -216,6 +219,9 @@ def compute_backtest_year(target_year, provider=None, traces=None, *, n_factors=
         "Benchmark_Return": benchmark_return,
         "Alpha": alpha,
     } for ticker in sorted(final_tickers)]
+    if shadow_fraction_limit is not None:
+        for row in details:
+            row["In_Shadow_List"] = bool(portfolio_df.loc[row["Ticker"], "In_Shadow_List"])
     if hasattr(provider, "sector_source"):
         summary["Sector_Source"] = provider.sector_source
         summary["Delisting_Policy"] = provider.delisting_policy

@@ -104,9 +104,11 @@ def _max_drawdown(values):
     return worst
 
 
-def _arm(provider, year, factors):
+def _arm(provider, year, factors, *, shadow_fraction_limit=None):
     traces = []
-    result = compute_backtest_year(year, provider=provider, traces=traces, n_factors=factors)
+    options = ({"shadow_fraction_limit": shadow_fraction_limit}
+               if shadow_fraction_limit is not None else {})
+    result = compute_backtest_year(year, provider=provider, traces=traces, n_factors=factors, **options)
     if not traces:
         raise MarketDataError("No selection trace was produced.")
     trace = traces[-1]

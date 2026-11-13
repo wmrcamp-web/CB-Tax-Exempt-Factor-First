@@ -61,7 +61,7 @@ def _acquire(trace, description, fetch, *args):
 
 def run_pipeline(end_date, gate_threshold, provider=None, trace=None, *,
                  universe_size=150, n_factors=8, shadow_cutoff=0.40,
-                 target_portfolio_size=16, ui=None):
+                 target_portfolio_size=16, ui=None, shadow_fraction_limit=None):
     """Select a portfolio as of end_date.
 
     gate_threshold: BENCHMARK_GATE (SPY T12M from this run's prices), a finite
@@ -176,7 +176,9 @@ def run_pipeline(end_date, gate_threshold, provider=None, trace=None, *,
     with spinner("Executing Phase 5: Selection & Portfolio Assembly..."):
         result = engine.assemble_portfolio(
             sp500_bench_return, metrics_df, loadings_df, survivors_df,
-            factor_headers, shadow_list, target_portfolio_size)
+            factor_headers, shadow_list, target_portfolio_size,
+            **({"shadow_fraction_limit": shadow_fraction_limit}
+               if shadow_fraction_limit is not None else {}))
         if trace is not None:
             trace.finish(result[3])
         return result
