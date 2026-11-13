@@ -86,8 +86,8 @@ coverage must also be verified on a machine that can reach `api.sharadar.com`.
 uses Sharadar's `tickers` sector/industry labels, including for delisted companies.
 Metadata is filtered to `table=stocks`, not `fundamentals`, so secondary share
 classes in historical index rosters are included.
-At the user's request, **DISCK is explicitly excluded** from Sharadar selection
-before market-cap ranking because its historical daily cap is unavailable.
+At the user's request, **DISCK and NWS are explicitly excluded** from Sharadar selection
+before market-cap ranking because their historical daily caps are unavailable.
 Full roster validation still occurs before the exclusion. CLI selection traces
 record the exclusion; these results are not a complete historical-universe
 backtest. The legacy/live provider is unchanged.
