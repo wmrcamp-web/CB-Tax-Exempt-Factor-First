@@ -16,7 +16,7 @@ PAGE_SIZE = 10000
 MAX_TICKER_PARAMETER_LENGTH = 200
 MAX_TICKERS_PER_REQUEST = 30
 TABLES = {"sp500", "daily", "stocks", "funds", "tickers"}
-EXCLUDED_SYMBOLS = {"DISCK", "NWS", "TFCFA", "UA"}
+EXCLUDED_SYMBOLS = {"DISCK", "FOX", "NWS", "TFCFA", "UA"}
 
 
 class SharadarClient:

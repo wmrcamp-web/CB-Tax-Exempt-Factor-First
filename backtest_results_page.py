@@ -49,7 +49,7 @@ def render_results(data_dir=None, provider=None):
                 "Sharadar results are stored separately. Historical membership and market "
                 "caps are used, but current Sharadar sector labels can introduce "
                 "classification/look-ahead bias. Optional last-close exit estimates are "
-                "not verified merger or bankruptcy payouts. DISCK, NWS, TFCFA and UA are excluded from "
+                "not verified merger or bankruptcy payouts. DISCK, FOX, NWS, TFCFA and UA are excluded from "
                 "selection at the user's request; the historical universe is altered."
             )
     st.markdown("Review the annual and cumulative performance of the Still Point Protocol against the S&P 500 benchmark.")
