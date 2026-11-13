@@ -316,8 +316,23 @@ def test_current_sharadar_classifications_do_not_require_gics_files(tmp_path):
     assert set(result["GICS Sector"]) == {"Industrials"}
     assert result["Security_ID"].nunique() == 500
     assert "not point-in-time GICS" in provider.notes[0]
-    assert all("from" not in filters and filters["table"] == "fundamentals"
+    assert all("from" not in filters and filters["table"] == "stocks"
                for resource, filters in client.calls if resource == "tickers")
+
+
+def test_metadata_uses_stock_universe_for_secondary_share_classes(tmp_path):
+    class ShareClassClient:
+        def table(self, resource, fields, **filters):
+            assert resource == "tickers"
+            symbols = filters["ticker"].split(",")
+            if filters["table"] == "fundamentals":
+                symbols = [symbol for symbol in symbols if symbol != "GOOG"]
+            return metadata(symbols)
+
+    provider = sp.SharadarProvider("fixture-only", tmp_path, client=ShareClassClient())
+    provider._vendor_symbols = {"GOOG": "GOOG", "GOOGL": "GOOGL"}
+    result = provider._get_metadata(["GOOG", "GOOGL"])
+    assert result["symbol"].tolist() == ["GOOG", "GOOGL"]
 
 
 @pytest.mark.parametrize("confirmed", [True, False])

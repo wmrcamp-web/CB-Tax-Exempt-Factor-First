@@ -84,6 +84,8 @@ coverage must also be verified on a machine that can reach `api.sharadar.com`.
 
 **No manual sector files are required by default.** The default configuration
 uses Sharadar's `tickers` sector/industry labels, including for delisted companies.
+Metadata is filtered to `table=stocks`, not `fundamentals`, so secondary share
+classes in historical index rosters are included.
 These are **current vendor classifications, not point-in-time GICS**. They are
 adapted into the pipeline's existing sector-column names, preserving the Energy
 exclusion and sector-based portfolio labels, but remaining classification and

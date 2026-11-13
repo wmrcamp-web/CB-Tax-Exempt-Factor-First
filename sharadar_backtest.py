@@ -54,7 +54,7 @@ def main():
                                 "lastpricedate", "permaticker"],
                 }[table]
                 filters = (
-                    {"table": "fundamentals"} if table == "tickers" else
+                    {"table": "stocks"} if table == "tickers" else
                     {"from": "2025-09-01", "to": "2025-12-31"}
                 )
                 frame = client.table(

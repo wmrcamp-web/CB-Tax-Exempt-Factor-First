@@ -113,7 +113,7 @@ class SharadarProvider:
             frame = self.client.table(
                 "tickers",
                 ["ticker", "name", "sector", "industry", "isdelisted", "lastpricedate", "permaticker"],
-                ticker=vendor_tickers, table="fundamentals",
+                ticker=vendor_tickers, table="stocks",
             )
             frame["symbol"] = _symbols(frame)
             if (not frame["symbol"].isin(batch).all()
