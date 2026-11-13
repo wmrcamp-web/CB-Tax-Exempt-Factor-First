@@ -87,7 +87,7 @@ def test_membership_replays_effective_changes_without_current_universe(tmp_path)
     assert client.calls[0][1] == {"from": "1998-01-01", "to": "2019-12-31"}
 
 
-@pytest.mark.parametrize("excluded_symbol", ["DISCK", "NWS"])
+@pytest.mark.parametrize("excluded_symbol", ["DISCK", "NWS", "TFCFA", "UA"])
 def test_user_requested_exclusion_preserves_full_roster_validation(tmp_path, excluded_symbol):
     history = roster()
     history.loc[0, "ticker"] = excluded_symbol
