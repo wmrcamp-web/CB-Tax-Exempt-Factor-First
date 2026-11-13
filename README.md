@@ -34,6 +34,168 @@ The alternate dashboard is `python -m streamlit run cb_taxable_portfolio_app.py`
 PostgreSQL installation is needed.** Existing identity configuration is not read
 by the cover sheet.
 
+### Opt-in Sharadar historical backtests
+
+The existing dashboards and baseline backtests still use the live provider.
+`sharadar_provider.py` supports **Sharadar's direct API**, not Nasdaq Data Link.
+It requests historical S&P 500 snapshots and effective membership changes,
+dated `daily.marketcap` (converted from USD millions to USD), adjusted stock
+prices, adjusted SPY fund prices, and security metadata. Required subscriptions
+cover the `sp500`, `daily`, `stocks`, `funds`, and `tickers` tables. See the vendor's
+[direct API documentation](https://sharadar.com/docs/intro).
+
+**Do not paste API keys into code, chat, command arguments, or committed files.**
+Revoke any exposed key. Configure its replacement as `SHARADAR_API_KEY` through
+your local environment, or through private `.streamlit/secrets.toml` for viewing
+and rebuilding results in Streamlit:
+
+```toml
+SHARADAR_API_KEY = "REPLACE_WITH_PRIVATE_KEY"
+# Optional; default is .data/sharadar/gics under the repository.
+SHARADAR_GICS_DIR = "/absolute/path/to/dated/gics"
+```
+
+The command-line runner reads **environment variables**, not Streamlit secrets.
+For example, enter the replacement without echoing it or saving it in shell history:
+
+```bash
+# Bash (macOS/Linux)
+read -r -s -p "Sharadar API key: " SHARADAR_API_KEY; echo
+export SHARADAR_API_KEY
+python sharadar_backtest.py --check-access
+```
+
+On Windows PowerShell:
+
+```powershell
+$key = Read-Host "Sharadar API key" -AsSecureString
+$env:SHARADAR_API_KEY = [System.Net.NetworkCredential]::new("", $key).Password
+python sharadar_backtest.py --check-access
+```
+
+The access check queries small samples and required fields from all five tables;
+it does not prove full historical coverage or correct delisting valuations.
+
+Ticker batches are limited to 30 securities and 200 characters (including commas)
+using the vendor identifiers, matching Sharadar's ticker-parameter limit.
+The adapter has offline fixture tests. The user confirmed live access to the
+first four tables on Windows; security metadata access and full historical
+coverage must also be verified on a machine that can reach `api.sharadar.com`.
+
+**No manual sector files are required by default.** The default configuration
+uses Sharadar's `tickers` sector/industry labels, including for delisted companies.
+Metadata is filtered to `table=stocks`, not `fundamentals`, so secondary share
+classes in historical index rosters are included.
+At the user's request, **DISCK, FOX, NWS, TFCFA and UA are explicitly excluded** from Sharadar selection
+before market-cap ranking because their historical daily caps are unavailable.
+Full roster validation still occurs before the exclusion. CLI selection traces
+record the exclusion; these results are not a complete historical-universe
+backtest. The legacy/live provider is unchanged.
+These are **current vendor classifications, not point-in-time GICS**. They are
+adapted into the pipeline's existing sector-column names, preserving the Energy
+exclusion and sector-based portfolio labels, but remaining classification and
+look-ahead bias must be disclosed. Missing labels/identifiers fail explicitly;
+there is no substitute universe from Wikipedia.
+
+For strict dated GICS instead, set `SHARADAR_SECTOR_SOURCE=dated_gics` in your
+environment or private Streamlit secrets. For each selection date, supply
+`.data/sharadar/gics/sp500_YYYY-MM-DD.csv` with columns:
+
+```csv
+Symbol,Security,GICS Sector,GICS Sub-Industry
+```
+
+Each file must contain the exact historical S&P 500 roster once, including
+companies later removed or delisted. For portfolio year 2016, the input date is
+2015-12-31. Use Sharadar's security identifiers, including its disambiguated
+delisted tickers; period/hyphen share-class normalization is supported. Obtain
+dated classifications from a licensed historical source. Matching the roster
+does **not** establish that classifications were actually known on that date;
+you remain responsible for provenance.
+
+Once configured:
+
+```bash
+python sharadar_backtest.py --start-year 2016 --end-year 2025 --estimate-delisted
+python -m streamlit run app.py
+```
+
+Alternatively, on **Backtest Results**, choose **Sharadar historical results**,
+select the first and last portfolio years, and click **Generate Sharadar backtest**.
+Generation is available even when no summary file exists. To allow estimated
+exits, check **Estimate delisted exits at last close** in the sidebar before
+generating. Otherwise missing terminal valuations stop the affected year.
+This uses your inherited environment key or private Streamlit secrets and does
+not require another terminal command. Re-generating replaces and archives
+successful requested years. The page reports each unsuccessful year explicitly;
+cumulative statistics are withheld if requested years failed or saved years have gaps.
+
+Summary, detailed holdings, archives and selection traces are isolated under
+`.data/sharadar/`, which is ignored by Git (the CLI writes selection traces;
+both CLI and UI export classification and exit-policy disclosures). No baseline CSVs are overwritten,
+no deployment is performed, and licensed source data must not be committed or
+redistributed without permission. A lapsed subscription's permitted local
+retention/use is governed by your vendor agreement.
+
+Stock selection aggregates adjusted daily closes into Monday-labeled weekly
+bars using only observations on or before the selection date. Sharadar forward
+returns use actual closes on the last SPY trading day on or before each annual
+boundary, rather than backfilling a start price from future observations.
+Missing/nonpositive caps, missing classifications, malformed membership, and
+unexplained missing endpoint prices fail explicitly; there is **no live-data fallback**.
+The roster-size check rejects obvious partial snapshots but cannot prove
+membership accuracy or historical coverage.
+
+**This is not a fully point-in-time, verified-delisting-return study.** With
+`--estimate-delisted` (or the UI checkbox), an early price termination is eligible
+for estimation only when the security master marks it delisted and its exact
+last price date matches the final observed adjusted close within the holding year.
+The estimate liquidates at that close and holds cash at **0%** through year-end.
+This is not the actual merger consideration or bankruptcy recovery and can
+materially overstate bankrupt-stock returns. It does not automatically reinvest
+in an acquirer or assume a verified payout. Ordinary missing quotes are not
+treated as delistings.
+
+CSV disclosures include `Sector_Source`, `Delisting_Policy`,
+`Estimated_Exit_Count` (summary), and `Exit_Valuation` (holdings). CLI selection
+traces also record the estimate notes. Strict mode remains available by omitting
+the estimate flag/checkbox. Skipping incomplete years can itself bias results:
+the CLI exits unsuccessfully when any requested year is absent. Verify complete
+annual coverage and investigate estimated exits before drawing conclusions.
+Existing reconciled CLI years are retained; to recalculate those years, use the
+UI generation button or archive/move the isolated output files first.
+
+### Paired membership-bias comparison
+
+To compare the current factor-first protocol without mixing in the inherited
+backtest's different provider, price boundaries, or protocol rules:
+
+```bash
+python compare_membership.py --start-year 2016 --end-year 2025 --estimate-delisted
+```
+
+Set `SHARADAR_API_KEY` privately as above. The command freezes one current S&P
+500 snapshot, then recomputes **both** sides for each year: historical membership
+versus intentionally biased current membership. Both use the same Sharadar
+historical market caps and adjusted prices, current sector classifications,
+exclusions, SPY trailing-return gate, factor-first protocol and exit policy.
+Current members not yet priced by the historical selection date are excluded;
+first-price dates reflect vendor coverage, not necessarily an IPO or actual
+listing date. Other missing inputs fail rather than falling back to current prices/caps. The
+current member ticker-to-historical-security mapping and first-price dates must
+be verified with the provider; ticker reuse or renaming can affect coverage.
+
+Each run saves a unique private JSON report under `.data/membership_comparisons/`,
+with frozen roster, source hashes, settings, per-side selection traces, holdings,
+returns, and failure statuses. The original and earlier Sharadar output files
+are not changed. The command publishes a return difference only for years where
+both sides succeed and benchmark windows, gates, and forward SPY returns match.
+Annualized returns are shown only when every requested year is paired and
+consecutive. Incomplete years make a full-period comparison invalid. The output isolates the
+effect of using current **membership** under these policies, not all forms of
+look-ahead bias or the impact of all excluded/delisted securities. Current sector
+labels and optional last-close cash estimates remain important limitations.
+
 ### Email and acknowledgment data
 
 - The email field is **optional**, self-reported, and unverified. It is not used

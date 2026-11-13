@@ -1,11 +1,13 @@
 """Streamlit Backtest Results view with explicit, session-backed reconciled rebuilds."""
 
 from pathlib import Path
+from datetime import date
 
 import pandas as pd
 import streamlit as st
 
 import backtest_exports as exports
+from data_errors import MarketDataError
 from ui_style import apply_nav_style
 from access_gate import require_access
 
@@ -15,6 +17,41 @@ def render_results(data_dir=None, provider=None):
     apply_nav_style()
     require_access()
     st.title("Historical Backtest Results")
+    sharadar = False
+    if provider is None and data_dir is None:
+        source_choice = st.sidebar.radio(
+            "Backtest data source", ["Existing / live-provider results", "Sharadar historical results"],
+        )
+        if source_choice == "Sharadar historical results":
+            from sharadar_backtest import DATA_DIR, configured_provider
+            from streamlit.errors import StreamlitSecretNotFoundError
+
+            try:
+                settings = st.secrets.to_dict()
+            except StreamlitSecretNotFoundError:
+                settings = {}
+            try:
+                estimate = st.sidebar.checkbox(
+                    "Estimate delisted exits at last close",
+                    help="Confirmed delisted stocks only: use last adjusted close and hold "
+                         "cash at 0%. Actual proceeds are unverified; bankruptcy returns "
+                         "can be overstated. Estimates are labeled in downloads.",
+                )
+                provider = configured_provider(
+                    settings, delisting_policy="last_close_cash" if estimate else "strict",
+                )
+            except MarketDataError as exc:
+                st.error(str(exc))
+                return
+            data_dir = DATA_DIR
+            sharadar = True
+            st.warning(
+                "Sharadar results are stored separately. Historical membership and market "
+                "caps are used, but current Sharadar sector labels can introduce "
+                "classification/look-ahead bias. Optional last-close exit estimates are "
+                "not verified merger or bankruptcy payouts. DISCK, FOX, NWS, TFCFA and UA are excluded from "
+                "selection at the user's request; the historical universe is altered."
+            )
     st.markdown("Review the annual and cumulative performance of the Still Point Protocol against the S&P 500 benchmark.")
     st.caption(
         "Saved backtests retain the protocol rules used when they were generated; "
@@ -23,8 +60,24 @@ def render_results(data_dir=None, provider=None):
     )
     data_dir = exports.DATA_DIR if data_dir is None else Path(data_dir)
     summary_path = data_dir / "backtest_results.csv"
+    key = f"backtest_details:{summary_path.resolve()}"
+    state = st.session_state.setdefault(key, {})
+    if sharadar:
+        generate_sharadar_results(data_dir, provider, state)
+        for year, error in state.get("generation_failures", {}).items():
+            st.error(f"{year}: Not published: {error}")
     try:
         source, df = exports.read_summary(summary_path)
+    except FileNotFoundError:
+        df = state.get("summary", pd.DataFrame(columns=exports.SUMMARY_COLUMNS))
+        source = df.to_csv(index=False).encode("utf-8")
+        if df.empty:
+            if sharadar:
+                st.info("No results have been generated yet. Choose the years above and click "
+                        "**Generate Sharadar backtest**.")
+            else:
+                st.warning("No valid annual summary is available.")
+            return
     except (OSError, ValueError, pd.errors.ParserError, pd.errors.EmptyDataError) as exc:
         st.warning(f"No valid annual summary is available: {exc}")
         return
@@ -41,12 +94,11 @@ def render_results(data_dir=None, provider=None):
         "ticker returns match their start/end prices and the weighted holdings return matches "
         "the summary portfolio return. Rebuilding reruns selection using the current provider's "
         "constituents and market caps (not original historical holdings) and replaces that "
-        "year's summary row; replaced rows are archived. Equal weights and filled weekly closes "
-        "are unchanged. Weights and returns are decimal fractions (0.10 = 10%); Weight_Percent "
-        "uses percent units.")
+        "year's summary row; replaced rows are archived. Equal weights are unchanged. "
+        "Legacy providers fill weekly closes; Sharadar validates annual endpoint prices "
+        "or explicitly labels opt-in last-close cash estimates. Weights and returns are decimal fractions "
+        "(0.10 = 10%); Weight_Percent uses percent units.")
     details_path = data_dir / "backtest_detailed_results.csv"
-    key = f"backtest_details:{summary_path.resolve()}"
-    state = st.session_state.setdefault(key, {})
     disk, problem = exports.read_details(details_path)
     if problem:
         st.warning(problem)
@@ -113,10 +165,57 @@ def render_results(data_dir=None, provider=None):
         st.dataframe(published, use_container_width=True)
 
     with summary_section:
-        render_summary(source, df, state.get("summary") is not None)
+        render_summary(
+            source, df, state.get("summary") is not None, sharadar=sharadar,
+            incomplete=bool(state.get("generation_failures")),
+        )
 
 
-def render_summary(source, df, session_only):
+def generate_sharadar_results(data_dir, provider, state):
+    st.caption("Generate results directly from Sharadar; no manual sector files are required "
+               "with the default sector source. Replaced years are archived.")
+    last_year = date.today().year - 1
+    first = st.number_input("First portfolio year", min_value=1999, max_value=last_year,
+                            value=max(1999, last_year - 9), step=1)
+    last = st.number_input("Last portfolio year", min_value=1999, max_value=last_year,
+                           value=last_year, step=1)
+    if first > last:
+        st.error("First portfolio year must not follow last portfolio year.")
+        return
+    if not st.button("Generate Sharadar backtest", type="primary"):
+        return
+    progress = st.progress(0.0, text="Starting Sharadar backtest...")
+
+    def report(done, total, year):
+        progress.progress(done / total, text=f"Processing {year}: {done}/{total} years")
+
+    with st.spinner("Fetching historical Sharadar data and calculating portfolios..."):
+        rebuilt, generated, failures = exports.rebuild_years(
+            range(int(first), int(last) + 1), provider=provider, progress=report,
+        )
+    state["generation_failures"] = failures
+    if rebuilt.empty:
+        st.error("No years were published. See the year-specific errors below.")
+        return
+    previous = state.get("summary")
+    state["summary"] = rebuilt if previous is None else exports.merge_summary(previous, rebuilt)
+    state["details"] = exports.merge_details(
+        state.get("details", exports.validate_details(pd.DataFrame())), generated,
+    )
+    try:
+        data_dir.mkdir(parents=True, exist_ok=True)
+        exports.persist_summary(rebuilt, data_dir / "backtest_results.csv")
+        exports.persist_details(generated, data_dir / "backtest_detailed_results.csv")
+        state.pop("summary", None)
+        state.pop("details", None)
+        state.pop("persistence_error", None)
+    except OSError as exc:
+        state["persistence_error"] = str(exc)
+        st.warning(f"Results are session-only because local storage failed: {exc}")
+    st.success(f"Published {len(rebuilt)} of {int(last) - int(first) + 1} requested years.")
+
+
+def render_summary(source, df, session_only, sharadar=False, incomplete=False):
     if session_only:
         source = df.to_csv(index=False).encode("utf-8")
     beat_count = int((df["Portfolio_Return"] > df["Benchmark_Return"]).sum())
@@ -126,8 +225,11 @@ def render_summary(source, df, session_only):
         f"S&P 500 in {beat_count} of {len(df)} annual periods. For context, SPIVA reported "
         "that 84.3% of U.S. large-cap active funds underperformed the S&P 500 over the "
         "decade ending in 2024. This is not a direct comparison: the periods and methods "
-        "differ, and this backtest uses today’s constituents and market-cap rankings for "
-        "historical years. It does not show how likely the protocol is to beat active managers."
+        "differ. " +
+        ("These isolated Sharadar results use dated membership and market caps; sector source "
+         "and exit policies are recorded in the exports. Incomplete years can be absent. " if sharadar else
+         "This backtest uses today’s constituents and market-cap rankings for historical years. ") +
+        "It does not show how likely the protocol is to beat active managers."
     )
     st.download_button(
         "Download annual summary CSV", data=source,
@@ -136,6 +238,21 @@ def render_summary(source, df, session_only):
                "view). This is not a detailed holdings export." if not session_only else
                "Session-only annual summary including rebuilt years (local persistence is unavailable).")
     df = df.copy()
+    if sharadar:
+        if "Sector_Source" in df:
+            st.caption("Sector sources in saved results: " + ", ".join(df["Sector_Source"].dropna().unique()))
+        if "Estimated_Exit_Count" in df:
+            estimates = pd.to_numeric(df["Estimated_Exit_Count"], errors="coerce").fillna(0).sum()
+            if estimates:
+                st.warning(f"Saved results include {int(estimates)} estimated delisted exits. "
+                           "See Exit_Valuation in detailed holdings; actual payouts are unverified.")
+    if sharadar and (incomplete or df["Year"].diff().dropna().ne(1).any()):
+        st.warning(
+            "Sharadar results have gaps in annual coverage. Cumulative performance and CAGR "
+            "are withheld rather than treating skipped years as consecutive holding periods."
+        )
+        st.dataframe(df, use_container_width=True)
+        return
     df["Cumulative_Portfolio"] = (1 + df["Portfolio_Return"]).cumprod() - 1
     df["Cumulative_Benchmark"] = (1 + df["Benchmark_Return"]).cumprod() - 1
     years = len(df)
